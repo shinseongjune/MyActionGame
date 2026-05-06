@@ -38,6 +38,12 @@ public:
 	bool bCollectOverlappingEnemiesOnStart = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
+	bool bCollectEnemiesInOwnerBoundsOnStart = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
+	float OwnerBoundsCollectionPadding = 50.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
 	bool bRegisterEnemiesThatEnterWhileActive = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
@@ -140,10 +146,12 @@ private:
 
 	void BindOwnerOverlapEvents();
 	void CollectOverlappingEnemies();
+	void CollectEnemiesInOwnerBounds();
 	void EvaluateEncounter();
 	void CompleteEncounter();
 	void SetRemainingEnemyCount(int32 NewCount);
 	bool MatchesEnemyFilter(const AActor* Actor) const;
+	bool IsActorInsideOwnerBounds(const AActor* Actor, const FBox& OwnerBounds) const;
 	bool IsPlayerActor(const AActor* Actor) const;
 	bool IsEnemyDefeated(const AActor* Enemy) const;
 	bool HasDefeatedBoolFlag(const AActor* Enemy) const;

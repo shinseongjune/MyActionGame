@@ -1,6 +1,7 @@
 #include "EncounterStateComponent.h"
 
 #include "Components/PrimitiveComponent.h"
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -74,6 +75,11 @@ void UEncounterStateComponent::StartEncounter()
 	if (bCollectOverlappingEnemiesOnStart)
 	{
 		CollectOverlappingEnemies();
+	}
+
+	if (bCollectEnemiesInOwnerBoundsOnStart)
+	{
+		CollectEnemiesInOwnerBounds();
 	}
 
 	EncounterEnemies.RemoveAllSwap([](const TObjectPtr<AActor>& Enemy)
@@ -205,6 +211,7 @@ void UEncounterStateComponent::CollectOverlappingEnemies()
 
 	TArray<AActor*> OverlappingActors;
 	Owner->GetOverlappingActors(OverlappingActors, AActor::StaticClass());
+	const int32 PreviousCount = EncounterEnemies.Num();
 
 	for (AActor* Candidate : OverlappingActors)
 	{
@@ -213,6 +220,54 @@ void UEncounterStateComponent::CollectOverlappingEnemies()
 			RegisterEnemy(Candidate);
 		}
 	}
+
+	LogEncounterMessage(FString::Printf(
+		TEXT("Overlap collection saw %d actors and registered %d new enemies."),
+		OverlappingActors.Num(),
+		EncounterEnemies.Num() - PreviousCount));
+}
+
+void UEncounterStateComponent::CollectEnemiesInOwnerBounds()
+{
+	AActor* Owner = GetOwner();
+	UWorld* World = GetWorld();
+	if (!Owner || !World)
+	{
+		return;
+	}
+
+	FBox OwnerBounds = Owner->GetComponentsBoundingBox(true, true);
+	if (!OwnerBounds.IsValid)
+	{
+		return;
+	}
+
+	const float BoundsPadding = FMath::Max(OwnerBoundsCollectionPadding, 0.0f);
+	OwnerBounds = OwnerBounds.ExpandBy(BoundsPadding);
+
+	const int32 PreviousCount = EncounterEnemies.Num();
+	int32 CandidateCount = 0;
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Candidate = *It;
+		if (!MatchesEnemyFilter(Candidate))
+		{
+			continue;
+		}
+
+		++CandidateCount;
+
+		if (IsActorInsideOwnerBounds(Candidate, OwnerBounds))
+		{
+			RegisterEnemy(Candidate);
+		}
+	}
+
+	LogEncounterMessage(FString::Printf(
+		TEXT("Bounds collection checked %d enemy candidates and registered %d new enemies."),
+		CandidateCount,
+		EncounterEnemies.Num() - PreviousCount));
 }
 
 void UEncounterStateComponent::EvaluateEncounter()
@@ -337,6 +392,21 @@ bool UEncounterStateComponent::MatchesEnemyFilter(const AActor* Actor) const
 	}
 
 	return false;
+}
+
+bool UEncounterStateComponent::IsActorInsideOwnerBounds(const AActor* Actor, const FBox& OwnerBounds) const
+{
+	if (!IsValid(Actor) || !OwnerBounds.IsValid)
+	{
+		return false;
+	}
+
+	FVector ActorOrigin = Actor->GetActorLocation();
+	FVector ActorExtent = FVector::ZeroVector;
+	Actor->GetActorBounds(false, ActorOrigin, ActorExtent);
+
+	const FBox ActorBounds = FBox::BuildAABB(ActorOrigin, ActorExtent);
+	return OwnerBounds.Intersect(ActorBounds) || OwnerBounds.IsInsideOrOn(Actor->GetActorLocation());
 }
 
 bool UEncounterStateComponent::IsPlayerActor(const AActor* Actor) const

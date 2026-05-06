@@ -28,11 +28,13 @@
 
 1. `Auto Start On Player Overlap`은 켜둔다.
 2. `Enemy Actor Class`는 가능하면 `BP_Enemy_Base`로 지정한다.
-3. 적들이 구역 안에 배치되어 있으면 `Collect Overlapping Enemies On Start`를 켜둔다.
+3. 적들이 구역 안에 배치되어 있으면 `Collect Overlapping Enemies On Start`와 `Collect Enemies In Owner Bounds On Start`를 켜둔다.
 4. 적들이 구역 밖에 있거나 자동 감지가 안 되면 `Encounter Enemies` 배열에 해당 적 액터들을 직접 넣는다.
 5. 테스트 중에는 `Log Encounter State`를 켜둔다.
 
 구역의 Box/Trigger 컴포넌트는 플레이어와 적을 Overlap할 수 있어야 한다. 플레이어가 들어와도 시작 로그가 안 뜨면 먼저 Trigger의 collision/overlap 설정을 확인한다.
+
+자동 Overlap 수집이 실패해도 `Collect Enemies In Owner Bounds On Start`가 켜져 있으면 EncounterZone 액터의 bounds 안에 있는 적을 한 번 더 찾아서 등록한다. 새 블록아웃 맵에서는 이 옵션을 켜두는 것이 안전하다.
 
 ## 적 처치 감지 방식
 
