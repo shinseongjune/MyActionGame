@@ -1,5 +1,6 @@
 #include "EncounterStateComponent.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
@@ -38,7 +39,16 @@ void UEncounterStateComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	LogEncounterMessage(FString::Printf(
+		TEXT("BeginPlay. EnemyClass=%s."),
+		EnemyActorClass ? *EnemyActorClass->GetName() : TEXT("None")));
+
 	BindOwnerOverlapEvents();
+
+	if (bCollectEnemiesFromZoneOnStart)
+	{
+		CollectEnemiesNow();
+	}
 
 	if (bStartEncounterOnBeginPlay)
 	{
@@ -69,24 +79,21 @@ void UEncounterStateComponent::StartEncounter()
 		return;
 	}
 
-	EncounterState = EEncounterState::Active;
 	DefeatedEnemies.Reset();
 
-	if (bCollectOverlappingEnemiesOnStart)
+	if (bCollectEnemiesFromZoneOnStart)
 	{
-		CollectOverlappingEnemies();
+		CollectEnemiesNow();
+	}
+	else
+	{
+		EncounterEnemies.RemoveAllSwap([](const TObjectPtr<AActor>& Enemy)
+		{
+			return !IsValid(Enemy);
+		});
 	}
 
-	if (bCollectEnemiesInOwnerBoundsOnStart)
-	{
-		CollectEnemiesInOwnerBounds();
-	}
-
-	EncounterEnemies.RemoveAllSwap([](const TObjectPtr<AActor>& Enemy)
-	{
-		return !IsValid(Enemy);
-	});
-
+	EncounterState = EEncounterState::Active;
 	RemainingEnemyCount = -1;
 	OnEncounterStarted.Broadcast();
 	LogEncounterMessage(FString::Printf(TEXT("Encounter started with %d tracked enemies."), EncounterEnemies.Num()));
@@ -111,6 +118,11 @@ void UEncounterStateComponent::ResetEncounter()
 	DefeatedEnemies.Reset();
 	SetRemainingEnemyCount(0);
 	LogEncounterMessage(TEXT("Encounter reset."));
+
+	if (bCollectEnemiesFromZoneOnStart)
+	{
+		CollectEnemiesNow();
+	}
 }
 
 void UEncounterStateComponent::RegisterEnemy(AActor* Enemy)
@@ -150,6 +162,55 @@ void UEncounterStateComponent::NotifyEnemyDefeated(AActor* Enemy)
 	}
 }
 
+void UEncounterStateComponent::CollectEnemiesNow()
+{
+	EncounterEnemies.Reset();
+	CollectEnemiesFromZoneCollider();
+}
+
+TArray<AActor*> UEncounterStateComponent::GetEncounterEnemies() const
+{
+	TArray<AActor*> ValidEnemies;
+	ValidEnemies.Reserve(EncounterEnemies.Num());
+
+	for (const TObjectPtr<AActor>& EnemyPtr : EncounterEnemies)
+	{
+		AActor* Enemy = EnemyPtr.Get();
+		if (IsValid(Enemy))
+		{
+			ValidEnemies.Add(Enemy);
+		}
+	}
+
+	return ValidEnemies;
+}
+
+UBoxComponent* UEncounterStateComponent::GetZoneBoxComponent() const
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	TArray<UBoxComponent*> BoxComponents;
+	Owner->GetComponents<UBoxComponent>(BoxComponents);
+	if (BoxComponents.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	for (UBoxComponent* BoxComponent : BoxComponents)
+	{
+		if (BoxComponent && BoxComponent->GetGenerateOverlapEvents())
+		{
+			return BoxComponent;
+		}
+	}
+
+	return BoxComponents[0];
+}
+
 void UEncounterStateComponent::BindOwnerOverlapEvents()
 {
 	if (bBoundOwnerOverlapEvents)
@@ -157,23 +218,21 @@ void UEncounterStateComponent::BindOwnerOverlapEvents()
 		return;
 	}
 
-	AActor* Owner = GetOwner();
-	if (!Owner)
+	UBoxComponent* ZoneBox = GetZoneBoxComponent();
+	if (!ZoneBox)
 	{
+		LogEncounterMessage(TEXT("No Box Collision component found on owner. Encounter cannot auto-start or auto-collect enemies."));
 		return;
 	}
 
-	TArray<UPrimitiveComponent*> PrimitiveComponents;
-	Owner->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
-
-	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	if (!ZoneBox->GetGenerateOverlapEvents())
 	{
-		if (PrimitiveComponent && PrimitiveComponent->GetGenerateOverlapEvents())
-		{
-			PrimitiveComponent->OnComponentBeginOverlap.AddDynamic(this, &UEncounterStateComponent::HandleOwnerBeginOverlap);
-			bBoundOwnerOverlapEvents = true;
-		}
+		LogEncounterMessage(FString::Printf(TEXT("Zone box '%s' has Generate Overlap Events disabled."), *ZoneBox->GetName()));
 	}
+
+	ZoneBox->OnComponentBeginOverlap.AddDynamic(this, &UEncounterStateComponent::HandleOwnerBeginOverlap);
+	bBoundOwnerOverlapEvents = true;
+	LogEncounterMessage(FString::Printf(TEXT("Bound zone box overlap: %s"), *ZoneBox->GetName()));
 }
 
 void UEncounterStateComponent::HandleOwnerBeginOverlap(
@@ -192,60 +251,18 @@ void UEncounterStateComponent::HandleOwnerBeginOverlap(
 	if (bAutoStartOnPlayerOverlap && IsPlayerActor(OtherActor))
 	{
 		StartEncounter();
-		return;
-	}
-
-	if (EncounterState == EEncounterState::Active && bRegisterEnemiesThatEnterWhileActive && MatchesEnemyFilter(OtherActor))
-	{
-		RegisterEnemy(OtherActor);
 	}
 }
 
-void UEncounterStateComponent::CollectOverlappingEnemies()
+void UEncounterStateComponent::CollectEnemiesFromZoneCollider()
 {
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		return;
-	}
-
-	TArray<AActor*> OverlappingActors;
-	Owner->GetOverlappingActors(OverlappingActors, AActor::StaticClass());
-	const int32 PreviousCount = EncounterEnemies.Num();
-
-	for (AActor* Candidate : OverlappingActors)
-	{
-		if (MatchesEnemyFilter(Candidate))
-		{
-			RegisterEnemy(Candidate);
-		}
-	}
-
-	LogEncounterMessage(FString::Printf(
-		TEXT("Overlap collection saw %d actors and registered %d new enemies."),
-		OverlappingActors.Num(),
-		EncounterEnemies.Num() - PreviousCount));
-}
-
-void UEncounterStateComponent::CollectEnemiesInOwnerBounds()
-{
-	AActor* Owner = GetOwner();
 	UWorld* World = GetWorld();
-	if (!Owner || !World)
+	const UBoxComponent* ZoneBox = GetZoneBoxComponent();
+	if (!World || !ZoneBox)
 	{
 		return;
 	}
 
-	FBox OwnerBounds = Owner->GetComponentsBoundingBox(true, true);
-	if (!OwnerBounds.IsValid)
-	{
-		return;
-	}
-
-	const float BoundsPadding = FMath::Max(OwnerBoundsCollectionPadding, 0.0f);
-	OwnerBounds = OwnerBounds.ExpandBy(BoundsPadding);
-
-	const int32 PreviousCount = EncounterEnemies.Num();
 	int32 CandidateCount = 0;
 
 	for (TActorIterator<AActor> It(World); It; ++It)
@@ -258,16 +275,16 @@ void UEncounterStateComponent::CollectEnemiesInOwnerBounds()
 
 		++CandidateCount;
 
-		if (IsActorInsideOwnerBounds(Candidate, OwnerBounds))
+		if (IsActorInsideZoneBox(Candidate, ZoneBox))
 		{
 			RegisterEnemy(Candidate);
 		}
 	}
 
 	LogEncounterMessage(FString::Printf(
-		TEXT("Bounds collection checked %d enemy candidates and registered %d new enemies."),
+		TEXT("Zone box collection checked %d enemy candidates and registered %d enemies."),
 		CandidateCount,
-		EncounterEnemies.Num() - PreviousCount));
+		EncounterEnemies.Num()));
 }
 
 void UEncounterStateComponent::EvaluateEncounter()
@@ -378,35 +395,22 @@ bool UEncounterStateComponent::MatchesEnemyFilter(const AActor* Actor) const
 		return true;
 	}
 
-	if (HasAnyConfiguredTag(Actor, EnemyActorTags))
-	{
-		return true;
-	}
-
-	if (bUseEnemyNameFallback)
-	{
-		const FString ActorName = Actor->GetName();
-		const FString ClassName = Actor->GetClass() ? Actor->GetClass()->GetName() : FString();
-		return ActorName.Contains(TEXT("Enemy"), ESearchCase::IgnoreCase)
-			|| ClassName.Contains(TEXT("Enemy"), ESearchCase::IgnoreCase);
-	}
-
-	return false;
+	return HasAnyConfiguredTag(Actor, EnemyActorTags);
 }
 
-bool UEncounterStateComponent::IsActorInsideOwnerBounds(const AActor* Actor, const FBox& OwnerBounds) const
+bool UEncounterStateComponent::IsActorInsideZoneBox(const AActor* Actor, const UBoxComponent* ZoneBox) const
 {
-	if (!IsValid(Actor) || !OwnerBounds.IsValid)
+	if (!IsValid(Actor) || !ZoneBox)
 	{
 		return false;
 	}
 
-	FVector ActorOrigin = Actor->GetActorLocation();
-	FVector ActorExtent = FVector::ZeroVector;
-	Actor->GetActorBounds(false, ActorOrigin, ActorExtent);
+	const FVector LocalActorLocation = ZoneBox->GetComponentTransform().InverseTransformPosition(Actor->GetActorLocation());
+	const FVector BoxExtent = ZoneBox->GetUnscaledBoxExtent();
 
-	const FBox ActorBounds = FBox::BuildAABB(ActorOrigin, ActorExtent);
-	return OwnerBounds.Intersect(ActorBounds) || OwnerBounds.IsInsideOrOn(Actor->GetActorLocation());
+	return FMath::Abs(LocalActorLocation.X) <= BoxExtent.X
+		&& FMath::Abs(LocalActorLocation.Y) <= BoxExtent.Y
+		&& FMath::Abs(LocalActorLocation.Z) <= BoxExtent.Z;
 }
 
 bool UEncounterStateComponent::IsPlayerActor(const AActor* Actor) const

@@ -4,6 +4,8 @@
 #include "Components/ActorComponent.h"
 #include "EncounterStateComponent.generated.h"
 
+class UBoxComponent;
+
 UENUM(BlueprintType)
 enum class EEncounterState : uint8
 {
@@ -35,22 +37,7 @@ public:
 	bool bAllowRestartAfterClear = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	bool bCollectOverlappingEnemiesOnStart = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	bool bCollectEnemiesInOwnerBoundsOnStart = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	float OwnerBoundsCollectionPadding = 50.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	bool bRegisterEnemiesThatEnterWhileActive = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	bool bUseEnemyNameFallback = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
-	bool bCanClearWithoutRegisteredEnemies = false;
+	bool bCollectEnemiesFromZoneOnStart = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Participants")
 	TSubclassOf<AActor> EnemyActorClass;
@@ -75,6 +62,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Defeat Detection")
 	TArray<FName> DefeatedActorTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Completion")
+	bool bCanClearWithoutRegisteredEnemies = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Encounter|Completion")
 	bool bDisableOwnerCollisionWhenCleared = false;
@@ -105,6 +95,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Encounter")
 	void NotifyEnemyDefeated(AActor* Enemy);
+
+	UFUNCTION(BlueprintCallable, Category="Encounter")
+	void CollectEnemiesNow();
+
+	UFUNCTION(BlueprintPure, Category="Encounter")
+	TArray<AActor*> GetEncounterEnemies() const;
 
 	UFUNCTION(BlueprintPure, Category="Encounter")
 	EEncounterState GetEncounterState() const { return EncounterState; }
@@ -144,14 +140,14 @@ private:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
+	UBoxComponent* GetZoneBoxComponent() const;
 	void BindOwnerOverlapEvents();
-	void CollectOverlappingEnemies();
-	void CollectEnemiesInOwnerBounds();
+	void CollectEnemiesFromZoneCollider();
 	void EvaluateEncounter();
 	void CompleteEncounter();
 	void SetRemainingEnemyCount(int32 NewCount);
 	bool MatchesEnemyFilter(const AActor* Actor) const;
-	bool IsActorInsideOwnerBounds(const AActor* Actor, const FBox& OwnerBounds) const;
+	bool IsActorInsideZoneBox(const AActor* Actor, const UBoxComponent* ZoneBox) const;
 	bool IsPlayerActor(const AActor* Actor) const;
 	bool IsEnemyDefeated(const AActor* Enemy) const;
 	bool HasDefeatedBoolFlag(const AActor* Enemy) const;
